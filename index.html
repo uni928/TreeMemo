@@ -83,6 +83,8 @@
             <button id="exportOutlineWithContent">CSV（ツリー：罫線+本文）</button>
             <button id="exportJSON">JSON エクスポート</button>
             <button id="importJSON">JSON インポート</button>
+            <button id="previewOutline">CSV（ツリー：罫線）プレビュー</button>
+            <button id="previewOutlineWithContent">CSV（ツリー：罫線+本文）プレビュー</button>
           </div>
         </div>
         <footer>
@@ -138,6 +140,90 @@ function idbGet(key) {
     req.onerror = (e) => reject(e);
   });
 }
+
+// ================= 新しいタブで CSV プレビュー =================
+// 汎用：新規タブに CSV テキストを描画
+function openCSVPreviewInNewTab(title, csvText) {
+  const win = window.open('', '_blank');
+  if (!win) { alert('ポップアップがブロックされました。許可してください。'); return; }
+
+  // HTML 特殊文字のエスケープ
+  const esc = (s) => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  const escaped = esc(csvText);
+
+  // シンプルなプレビュー用 HTML
+  win.document.open();
+  win.document.write(`<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<title>${esc(title)}</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; margin:0; }
+  header { position: sticky; top:0; background:#111; color:#fff; padding:10px 12px; display:flex; gap:8px; align-items:center; }
+  header h1 { font-size:14px; margin:0; font-weight:600; }
+  header button { border:1px solid #444; background:#222; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  header button:hover { background:#2e2e2e; }
+  main { padding:12px; }
+  pre { white-space:pre; overflow:auto; border-top:1px solid #ddd; margin:0; padding:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>${esc(title)}</h1>
+  <button id="btnCopy">全選択 & コピー</button>
+  <button id="btnDownload">CSV をダウンロード</button>
+</header>
+<main>
+  <pre id="csvArea">${escaped}</pre>
+</main>
+<script>
+  const csvText = \`${csvText.replace(/`/g, '\\`')}\`;
+  document.getElementById('btnCopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(csvText);
+      alert('クリップボードにコピーしました');
+    } catch (e) {
+      // フォールバック：選択してコピー
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNode(document.getElementById('csvArea'));
+      sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand('copy');
+      sel.removeAllRanges();
+      alert('コピーしました（フォールバック）');
+    }
+  };
+  document.getElementById('btnDownload').onclick = () => {
+    const blob = new Blob([csvText], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'preview.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+<//script>
+</body></html>`);
+  win.document.close();
+}
+
+// 既存のアウトライン関数を利用して CSV を生成し、プレビュー
+function previewCSV_TreeOutline() {
+  // 罫線版（タイトルのみ）
+  const rows = buildOutlineLines(state.root, 'unicode'); // [{outline}]
+  const csv = toCSV(rows, ['outline']);
+  openCSVPreviewInNewTab('CSV（ツリー：罫線／プレビュー）', csv);
+}
+
+function previewCSV_TreeOutlineWithContent() {
+  // 罫線＋本文版
+  const rows = buildOutlineLinesWithContent(state.root); // [{outline, content}]
+  const csv = toCSV(rows, ['outline','content']);
+  openCSVPreviewInNewTab('CSV（ツリー：罫線+本文／プレビュー）', csv);
+}
+
 
 // ---------------- 汎用ユーティリティ ----------------
 const $ = (id) => document.getElementById(id);
@@ -769,6 +855,8 @@ function wireButtons() {
     ['exportJSON', exportJSON_All],
     ['importJSON', openImportJSON],
     ['importCSVPath', openImportCSV_PathRows],
+    ['previewOutline', previewCSV_TreeOutline],
+    ['previewOutlineWithContent', previewCSV_TreeOutlineWithContent],
   ];
   map.forEach(([id, fn]) => {
     const el = $(id);
