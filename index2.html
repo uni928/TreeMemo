@@ -40,9 +40,7 @@
     <span class="sp"></span>
     <button id="addRoot">最上位を追加</button>
     <button id="exportCSV">CSV（罫線）DL</button>
-    <button id="exportJSON">JSON DL</button>
     <button id="importCSV">CSV 読込</button>
-    <button id="importJSON">JSON 読込</button>
     <button id="reset">リセット</button>
   </header>
   <main>
@@ -281,7 +279,7 @@ function openFileOnce(accept, onLoad){
   input.onchange = async (e)=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const text=await f.text(); onLoad(text,f); };
   input.click();
 }
-
+/*
 // JSON エクスポート
 $('exportJSON').onclick = async ()=>{
   const payload = { version:1, exportedAt:new Date().toISOString(), root };
@@ -317,7 +315,7 @@ $('importJSON').onclick = ()=>{
     }catch(e){ alert('JSON 読み込みに失敗しました'); }
   });
 };
-
+*/
 // CSV パース
 function parseCSV(text){
   const rows=[]; let i=0,cur='',row=[],q=false;
