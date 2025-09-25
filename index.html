@@ -83,7 +83,6 @@
             <button id="exportOutlineWithContent">CSV（ツリー：罫線+本文）</button>
             <button id="exportJSON">JSON エクスポート</button>
             <button id="importJSON">JSON インポート</button>
-            <button id="importCSVPath">CSV インポート（path,title,content）</button>
           </div>
         </div>
         <footer>
@@ -551,7 +550,7 @@ function openImportJSON() {
       return;
     }
 
-    const mode = prompt('インポートモードを入力：\n"replace" で全置換 / "merge" で現在階層へマージ', 'merge');
+    const mode = prompt('インポートモードを入力：\n"replace" で全置換 / "merge" で現在階層へマージ', 'replace');
     if (mode === 'replace') {
       if (!confirm('現在の全データを置き換えます。よろしいですか？')) return;
       // ルートは常に id:"root" を維持する
