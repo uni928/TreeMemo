@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>小説家用・設定管理（フォルダ構造メモ帳）</title>
+<style>
+  :root{--bg:#0b1020;--panel:#121a33;--muted:#7f8ab3;--text:#e8ecff;--acc:#6da3ff;--danger:#ff6d8a}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0e1430);color:var(--text);font:14px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif}
+  header{display:flex;align-items:center;gap:.75rem;padding:.75rem 1rem;border-bottom:1px solid #1e2b55;background:#0d1530;position:sticky;top:0;z-index:2}
+  header h1{font-size:1rem;margin:0;opacity:.9}
+  .path{margin-left:auto;font-size:.9rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw}
+  .wrap{display:grid;grid-template-columns: 320px 1fr;gap:10px;height:calc(100% - 52px)}
+  aside{border-right:1px solid #1e2b55;background:var(--panel);display:flex;flex-direction:column;min-width:240px}
+  .toolbar{display:flex;gap:.5rem;padding:.5rem;border-bottom:1px solid #1e2b55;background:#0f1735;flex-wrap:wrap}
+  button, .btn{appearance:none;border:1px solid #2a3c70;background:#18234a;color:var(--text);padding:.45rem .65rem;border-radius:.6rem;cursor:pointer}
+  button:hover{border-color:#3d56a6}
+  .btn-danger{border-color:#5a1c2c;background:#2a0e17;color:#ffd9e1}
+  .btn-outline{background:transparent}
+  .list{overflow:auto;padding:.5rem}
+  .list .item{padding:.4rem .6rem;border:1px solid transparent;border-radius:.5rem;display:flex;gap:.5rem;align-items:center;justify-content:space-between}
+  .list .item:hover{background:#131d40}
+  .list .item.active{background:#0f1838;border-color:#2c3e78}
+  .title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .meta{color:var(--muted);font-size:.75rem}
+  main{padding:12px;overflow:auto}
+  .card{background:var(--panel);border:1px solid #1e2b55;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .edit{display:grid;grid-template-columns:1fr;gap:10px;padding:12px}
+  label{font-size:.85rem;color:var(--muted)}
+  input[type="text"], textarea{width:100%;background:#0f1735;border:1px solid #223162;color:var(--text);border-radius:.6rem;padding:.6rem}
+  textarea{min-height:320px;resize:vertical}
+  .row{display:flex;gap:.5rem;flex-wrap:wrap}
+  .space{flex:1}
+  footer{display:flex;gap:.5rem;padding:8px 12px;border-top:1px solid #1e2b55;background:#0f1735;border-radius:0 0 12px 12px}
+  .hint{color:var(--muted);font-size:.85rem;padding:0 12px 12px}
+  .badge{display:inline-block;padding:.1rem .5rem;border:1px solid #2a3c70;border-radius:999px;color:#b8c6ff;background:#0f1735;font-size:.75rem}
+  .breadcrumb{display:flex;gap:.35rem;align-items:center;flex-wrap:nowrap;overflow:hidden}
+  .breadcrumb span{white-space:nowrap}
+  .breadcrumb .sep{opacity:.4}
+  .empty{color:var(--muted);padding:16px}
+  @media (max-width: 900px){.wrap{grid-template-columns:1fr}.path{max-width:40vw}}
+</style>
+</head>
+<body>
+  <header>
+    <h1>設定管理（フォルダ構造メモ帳）</h1>
+    <div class="path">
+      <div class="breadcrumb" id="breadcrumb"></div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <!-- 左：項目一覧 -->
+    <aside>
+      <div class="toolbar">
+        <button id="addItem">＋ 追加</button>
+        <button id="deleteItem" class="btn-danger">削除</button>
+        <button id="enterItem">中に入る</button>
+        <button id="upOne" class="btn-outline">1階層上へ</button>
+      </div>
+      <div class="list" id="itemList"></div>
+    </aside>
+
+    <!-- 右：編集欄 -->
+    <main>
+      <div class="card">
+        <div class="edit">
+          <div>
+            <label>タイトル</label>
+            <input id="titleInput" type="text" placeholder="タイトルを入力" />
+          </div>
+          <div>
+            <label>本文</label>
+            <textarea id="contentInput" placeholder="ここに本文を書きます"></textarea>
+          </div>
+          <div class="row">
+            <button id="saveBtn">保存</button>
+            <button id="enterFromEditor">中に入る</button>
+            <span class="space"></span>
+            <button id="exportOutlineUnicode">CSV（ツリー：罫線）</button>
+            <button id="exportOutlineWithContent">CSV（ツリー：罫線+本文）</button>
+          </div>
+        </div>
+        <footer>
+          <span class="badge" id="where">/</span>
+          <span class="badge" id="count">0 件</span>
+          <span class="badge" id="updated">未保存</span>
+        </footer>
+        <div class="hint">左：項目一覧（追加 / 削除 / 中に入る / 1階層上へ）｜右：選択項目の編集。<br/>「中に入る」を押すと、その項目の中にサブ項目を複数作れます（入った先でも見た目は同じ）。CSVは「タイトルのみ」か「タイトル+本文」で書き出し可能です。</div>
+      </div>
+    </main>
+  </div>
+
+<script>
+// ========== 小説家用・設定管理：IndexedDB 完全版（<script>内だけ） ==========
+// 依存：ボタンや入力要素の id は以下を想定
+// addItem, deleteItem, enterItem, upOne, saveBtn, enterFromEditor,
+// exportTitle, exportTitleBody, titleInput, contentInput,
+// itemList, breadcrumb, where, count, updated
+
+// ---------------- IndexedDB ラッパー ----------------
+const DB_NAME = 'novelSettingDB';
+const STORE_NAME = 'tree';
+let db = null;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    req.onsuccess = (e) => { db = e.target.result; resolve(); };
+    req.onerror = (e) => reject(e);
+  });
+}
+
+function idbSet(key, value) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+function idbGet(key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+// ---------------- 汎用ユーティリティ ----------------
+const $ = (id) => document.getElementById(id);
+const now = () => Date.now();
+const uid = () => Math.random().toString(36).slice(2) + now().toString(36);
+
+function download(filename, text, mime = 'text/plain;charset=utf-8;') {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function toCSV(rows, headers) {
+  const esc = (s) => {
+    s = s == null ? '' : String(s).replace(/\r?\n/g, '\n');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [headers.map(esc).join(',')];
+  rows.forEach(r => lines.push(headers.map(h => esc(r[h] ?? '')).join(',')));
+  return lines.join('\r\n');
+}
+
+// ========= 1) パス連結チェーン版（大項目 - 中項目 - 小項目） =========
+function buildTitleChains(root) {
+  const rows = [];
+  const walk = (node, trail) => {
+    if (node !== root) {
+      const chain = [...trail, node.title || ''].filter(Boolean).join(' - ');
+      rows.push({ chain });
+    }
+    node.children.forEach(child => walk(child, [...trail, node.title || '(no title)']));
+  };
+  walk(root, []);
+  return rows;
+}
+
+// ========= 罫線アウトライン + 本文 =========
+// 各行に outline（罫線付きタイトル）と content を出力
+function buildOutlineLinesWithContent(root) {
+  const lines = [];
+
+  const brK = '├─ ';
+  const brL = '└─ ';
+  const bar = '│   ';
+  const spc = '    ';
+
+  const walk = (node, ancestorsLastFlags) => {
+    if (node !== root) {
+      // プレフィックス生成
+      let prefix = '';
+      for (let i = 0; i < ancestorsLastFlags.length - 1; i++) {
+        prefix += (ancestorsLastFlags[i] ? spc : bar);
+      }
+      const isLast = ancestorsLastFlags[ancestorsLastFlags.length - 1] ?? true;
+      prefix += isLast ? brL : brK;
+
+      lines.push({
+        outline: prefix + (node.title || '(無題)'),
+        content: node.content || ''
+      });
+    }
+
+    const kids = node.children.slice().sort((a,b)=>(a.title||'').localeCompare(b.title||'', 'ja'));
+    kids.forEach((child, idx) => {
+      const last = idx === kids.length - 1;
+      walk(child, [...ancestorsLastFlags, last]);
+    });
+  };
+
+  const top = state.root.children.slice().sort((a,b)=>(a.title||'').localeCompare(b.title||'', 'ja'));
+  top.forEach((child, idx) => {
+    const lastTop = idx === top.length - 1;
+    walk(child, [lastTop]);
+  });
+
+  return lines;
+}
+
+function exportCSV_TreeOutlineWithContent() {
+  const rows = buildOutlineLinesWithContent(state.root);
+  const csv = toCSV(rows, ['outline','content']);
+  const dt = new Date();
+  const stamp = dt.toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`settings-outline-withContent-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
+}
+
+
+function exportCSV_PathChain() {
+  const rows = buildTitleChains(state.root);
+  const csv = toCSV(rows, ['chain']);
+  const dt = new Date();
+  const stamp = dt.toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`settings-path-chain-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
+}
+
+
+// ========= 2) ツリーアウトライン版（罫線 or l/L） =========
+// style: 'unicode' | 'asciiL'
+//  - 'unicode' … ├─ / └─ / │ を使用
+//  - 'asciiL'  … l / L を使用（インデントは空白）
+// 1ノード=1行（CSVは1列: outline）
+function buildOutlineLines(root, style = 'unicode') {
+  const lines = [];
+
+  const isUnicode = style === 'unicode';
+  const brK = isUnicode ? '├─ ' : 'l ';
+  const brL = isUnicode ? '└─ ' : 'L ';
+  const bar = isUnicode ? '│   ' : '    ';   // 継続インデント（asciiは空白）
+  const spc = '    ';                        // 末端インデント
+
+  const walk = (node, ancestorsLastFlags) => {
+    if (node !== root) {
+      // プレフィックス生成
+      let prefix = '';
+      for (let i = 0; i < ancestorsLastFlags.length - 1; i++) {
+        prefix += (isUnicode ? (ancestorsLastFlags[i] ? spc : bar) : (ancestorsLastFlags[i] ? spc : '    '));
+      }
+      const isLast = ancestorsLastFlags[ancestorsLastFlags.length - 1] ?? true;
+      prefix += isLast ? brL : brK;
+
+      lines.push({ outline: prefix + (node.title || '(無題)') });
+    }
+
+    const kids = node.children.slice().sort((a,b)=> (a.title||'').localeCompare(b.title||'', 'ja'));
+    kids.forEach((child, idx) => {
+      const last = idx === kids.length - 1;
+      walk(child, [...ancestorsLastFlags, last]);
+    });
+  };
+
+  // ルート直下は最上位扱い。ルート名自体は出さない
+  const top = state.root.children.slice().sort((a,b)=> (a.title||'').localeCompare(b.title||'', 'ja'));
+  if (isUnicode) {
+    // 見出しとして最上位タイトルを線なしで出したい場合はここで lines.push してもOK
+    // 今回は各ノードを統一的に ├/└ で出力するため root は空行のみ
+  }
+  top.forEach((child, idx) => {
+    const lastTop = idx === top.length - 1;
+    walk(child, [lastTop]);
+  });
+
+  return lines;
+}
+
+function exportCSV_TreeOutline(style = 'unicode') {
+  const rows = buildOutlineLines(state.root, style);
+  const csv = toCSV(rows, ['outline']);
+  const dt = new Date();
+  const stamp = dt.toISOString().slice(0,19).replace(/[:T]/g,'-');
+  const tag = style === 'unicode' ? 'outline' : 'outline-asciiL';
+  download(`settings-${tag}-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
+}
+
+
+// ===== 使い方例（ボタンに割り当てたい場合） =====
+// 既存 wireButtons に以下のような行を足してください：
+//   ['exportChain', () => exportCSV_PathChain()],
+//   ['exportOutlineUnicode', () => exportCSV_TreeOutline('unicode')],
+//   ['exportOutlineAsciiL', () => exportCSV_TreeOutline('asciiL')]
+
+// 例：HTML 側にボタンを追加
+// <button id="exportChain">CSV（チェーン）</button>
+// <button id="exportOutlineUnicode">CSV（ツリー：罫線）</button>
+// <button id="exportOutlineAsciiL">CSV（ツリー：l/L）</button>
+
+
+// ---------------- データモデル ----------------
+/** @typedef {{id:string,title:string,content:string,children:NodeItem[],createdAt:number}} NodeItem */
+
+function createNode(title = '新規項目') {
+  return { id: uid(), title, content: '', children: [], createdAt: now() };
+}
+
+let state = {
+  /** @type {NodeItem} */
+  root: { id: 'root', title: '(root)', content: '', children: [], createdAt: now() },
+  /** @type {string[]} id の配列（root からのパス） */
+  path: [],
+  /** @type {string|null} 現在のコンテナ内で選択されている項目 id */
+  selectedId: null
+};
+
+async function saveState() {
+  await idbSet('root', state.root);
+  await idbSet('path', state.path);
+  setUpdated('保存済み');
+}
+
+async function loadState() {
+  const root = await idbGet('root');
+  const path = await idbGet('path');
+  if (root) state.root = root;
+  if (path) state.path = path;
+}
+
+// ---------------- ツリー操作 ----------------
+function findNodeByPath(root, path) {
+  let cur = root;
+  for (const pid of path) {
+    const next = cur.children.find(c => c.id === pid);
+    if (!next) return cur; // 壊れたパス防御
+    cur = next;
+  }
+  return cur;
+}
+
+function getCurrentContainer() {
+  return findNodeByPath(state.root, state.path);
+}
+
+function getNodeInPath(index) {
+  // index: 0-based depth（path[index] のノード）
+  let cur = state.root;
+  for (let i = 0; i <= index; i++) {
+    cur = cur.children.find(c => c.id === state.path[i]);
+    if (!cur) break;
+  }
+  return cur;
+}
+
+// CSV用：ツリー全体をフラット化
+function flatten(root) {
+  const rows = [];
+  const walk = (node, trailTitles) => {
+    if (node !== root) {
+      rows.push({
+        path: '/' + trailTitles.join('/'),
+        title: node.title || '',
+        content: node.content || ''
+      });
+    }
+    node.children.forEach(child => walk(child, [...trailTitles, node.title || '(no title)']));
+  };
+  walk(root, []);
+  return rows;
+}
+
+// ---------------- 描画（左リスト／パンくず／エディタ） ----------------
+function setUpdated(text) { $('updated').textContent = text; }
+
+function renderBreadcrumb() {
+  const el = $('breadcrumb');
+  if (!el) return;
+  el.innerHTML = '';
+
+  const pushCrumb = (label, idx) => {
+    const span = document.createElement('span');
+    span.textContent = label;
+    span.className = 'crumb';
+    span.style.cursor = 'pointer';
+    span.onclick = () => { state.path = state.path.slice(0, idx); state.selectedId = null; refreshAll(); saveState(); };
+    el.appendChild(span);
+  };
+
+  // root
+  pushCrumb('/', 0);
+  const sep = () => el.appendChild(Object.assign(document.createElement('span'), { textContent: '›', className: 'sep' }));
+
+  let accTitles = [];
+  if (state.path.length) sep();
+  state.path.forEach((_, i) => {
+    const node = getNodeInPath(i);
+    const label = node ? (node.title || '(no title)') : '(unknown)';
+    accTitles.push(label);
+    pushCrumb(label, i + 1);
+    if (i < state.path.length - 1) sep();
+  });
+
+  const where = $('where');
+  if (where) where.textContent = '/' + accTitles.join('/');
+}
+
+function renderList() {
+  const list = $('itemList');
+  if (!list) return;
+  const container = getCurrentContainer();
+  const items = container.children;
+
+  list.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '（項目はまだありません）';
+    list.appendChild(empty);
+  }
+
+  items
+    .slice()
+    .sort((a, b) => a.title.localeCompare(b.title, 'ja'))
+    .forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'item' + (state.selectedId === item.id ? ' active' : '');
+      row.onclick = () => { state.selectedId = item.id; fillEditor(); renderList(); };
+
+      const title = document.createElement('div');
+      title.className = 'title';
+      title.textContent = item.title || '(無題)';
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const d = new Date(item.createdAt);
+      meta.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+
+      row.appendChild(title);
+      row.appendChild(meta);
+      list.appendChild(row);
+    });
+
+  const count = $('count');
+  if (count) count.textContent = `${items.length} 件`;
+}
+
+function fillEditor() {
+  const t = getCurrentContainer().children.find(c => c.id === state.selectedId) || null;
+  const ti = $('titleInput');
+  const ci = $('contentInput');
+  if (ti) ti.value = t ? t.title : '';
+  if (ci) ci.value = t ? t.content : '';
+}
+
+// ---------------- 操作（追加／削除／保存／移動） ----------------
+async function addItem() {
+  const container = getCurrentContainer();
+  const n = createNode();
+  container.children.push(n);
+  state.selectedId = n.id;
+  await saveState();
+  renderList();
+  fillEditor();
+}
+
+async function deleteItem() {
+  const container = getCurrentContainer();
+  if (!state.selectedId) { alert('削除する項目を選択してください'); return; }
+  const idx = container.children.findIndex(c => c.id === state.selectedId);
+  if (idx >= 0) {
+    if (confirm('選択中の項目を削除します。よろしいですか？')) {
+      container.children.splice(idx, 1);
+      state.selectedId = null;
+      await saveState();
+      renderList();
+      fillEditor();
+    }
+  }
+}
+
+async function saveEditor() {
+  const container = getCurrentContainer();
+  const t = container.children.find(c => c.id === state.selectedId);
+  if (!t) { setUpdated('（項目未選択）'); return; }
+  const ti = $('titleInput');
+  const ci = $('contentInput');
+  t.title = ti ? ti.value.trim() : t.title;
+  t.content = ci ? ci.value : t.content;
+  await saveState();
+  renderList();
+}
+
+async function enterSelected() {
+  const container = getCurrentContainer();
+  const t = container.children.find(c => c.id === state.selectedId);
+  if (!t) { alert('中に入る項目を選択してください'); return; }
+  state.path.push(t.id);
+  state.selectedId = null;
+  await saveState();
+  refreshAll();
+}
+
+async function upOne() {
+  if (!state.path.length) return;
+  state.path.pop();
+  state.selectedId = null;
+  await saveState();
+  refreshAll();
+}
+
+// ---------------- CSV エクスポート ----------------
+function exportCSV(mode) {
+  // mode: 'title' | 'titleBody'
+  const rows = flatten(state.root);
+  let headers, data;
+  if (mode === 'title') {
+    headers = ['path', 'title'];
+    data = rows.map(r => ({ path: r.path, title: r.title }));
+  } else {
+    headers = ['path', 'title', 'content'];
+    data = rows;
+  }
+  const csv = toCSV(data, headers);
+  const dt = new Date();
+  const stamp = dt.toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  download(`settings-${mode}-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
+}
+
+// ---------------- 画面更新・初期化 ----------------
+function refreshAll() {
+  renderBreadcrumb();
+  renderList();
+  fillEditor();
+}
+
+let saveTimer = null;
+function setupAutosave() {
+  const ti = $('titleInput');
+  const ci = $('contentInput');
+  if (ti) ti.addEventListener('input', () => {
+    setUpdated('編集中…');
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveEditor, 800);
+  });
+  if (ci) ci.addEventListener('input', () => {
+    setUpdated('編集中…');
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveEditor, 1000);
+  });
+}
+
+function setupShortcuts() {
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      saveEditor();
+    }
+    // 本文未フォーカス時の Enter で追加（任意）
+    if (e.key === 'Enter' && (document.activeElement === document.body)) {
+      addItem();
+    }
+  });
+}
+
+function wireButtons() {
+  const map = [
+    ['addItem', addItem],
+    ['deleteItem', deleteItem],
+    ['enterItem', enterSelected],
+    ['upOne', upOne],
+    ['saveBtn', saveEditor],
+    ['enterFromEditor', enterSelected],
+    ['exportTitle', () => exportCSV('title')],
+    ['exportTitleBody', () => exportCSV('titleBody')],
+    ['exportChain', () => exportCSV_PathChain()],
+    ['exportOutlineUnicode', () => exportCSV_TreeOutline('unicode')],
+    ['exportOutlineAsciiL', () => exportCSV_TreeOutline('asciiL')],
+    ['exportOutlineWithContent', exportCSV_TreeOutlineWithContent],
+  ];
+  map.forEach(([id, fn]) => {
+    const el = $(id);
+    if (el) el.onclick = fn;
+  });
+}
+
+// ---------------- エントリーポイント ----------------
+(async () => {
+  await openDB();
+  await loadState();
+  refreshAll();
+  setUpdated('ロード済み');
+  wireButtons();
+  setupAutosave();
+  setupShortcuts();
+})();
+
+</script>
+</body>
+</html>
