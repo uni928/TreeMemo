@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ツリー罫線エディタ（簡易版）</title>
+<style>
+  :root{--bg:#0b1020;--card:#111934;--ink:#e9edff;--mut:#98a3cb;--acc:#6aa6ff;--line:#2a3768;--sel:#1a2550;--pop:#0f1635;}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:linear-gradient(180deg,#091025,#0b1430);color:var(--ink);font:14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+  header{position:sticky;top:0;z-index:2;background:#0d1530;border-bottom:1px solid #1d2b59;padding:10px 12px;display:flex;gap:8px;align-items:center}
+  header h1{margin:0;font-size:14px;font-weight:700;opacity:.95}
+  header .sp{flex:1}
+  header button{border:1px solid #2a3b70;background:#18234a;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer}
+  header button:hover{border-color:#3c54a3}
+  main{max-width:920px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border:1px solid #1d2b59;border-radius:12px;overflow:hidden}
+  .tree{padding:10px 12px}
+  .line{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;white-space:pre}
+  .line:hover{background:#121d43}
+  .line.active{background:var(--sel);outline:1px solid #2c3c78}
+  .title{flex:1}
+  .badge{display:inline-block;padding:2px 8px;border:1px solid #2a3b70;border-radius:999px;color:#c7d2ff;background:#0f1635;font-size:12px}
+  .mut{color:var(--mut)}
+  .popover{margin:6px 0 8px 28px;background:var(--pop);border:1px solid #27346a;border-radius:10px;padding:8px;display:flex;flex-wrap:wrap;gap:8px}
+  .popover button{border:1px solid #2a3b70;background:#18234a;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer}
+  .popover button:hover{border-color:#3c54a3}
+  .rename{display:flex;gap:6px;align-items:center}
+  .rename input{background:#0f1738;border:1px solid #223162;border-radius:8px;color:var(--ink);padding:6px 8px;min-width:240px}
+  .empty{color:var(--mut);padding:14px}
+  footer{padding:10px 12px;border-top:1px solid #1d2b59;background:#0f1738;font-size:12px;color:var(--mut)}
+</style>
+</head>
+<body>
+  <header>
+    <h1>ツリー罫線エディタ（簡易版）</h1>
+    <span class="sp"></span>
+    <button id="addRoot">最上位を追加</button>
+    <button id="exportCSV">CSV（ツリー：罫線）をダウンロード</button>
+    <button id="reset">リセット</button>
+  </header>
+  <main>
+    <div class="card">
+      <div id="tree" class="tree"></div>
+      <footer>
+        クリックで編集メニューを表示：子を作成 / 名前を編集 / 上下に移動。保存は自動（localStorage）。
+      </footer>
+    </div>
+  </main>
+
+<script>
+// ---------------- データモデル ----------------
+const STORAGE_KEY = 'simple-outline-editor-v1';
+const $ = (id)=>document.getElementById(id);
+const uid = ()=> Math.random().toString(36).slice(2)+Date.now().toString(36);
+const now = ()=> Date.now();
+
+/** @typedef {{id:string,title:string,children:NodeItem[],createdAt:number}} NodeItem */
+
+let root = load() || {
+  id:'root', title:'(root)', createdAt: now(), children:[
+    { id:uid(), title:'プロジェクト管理', createdAt:now(), children:[
+      { id:uid(), title:'GitHub運用ルール', createdAt:now(), children:[] },
+      { id:uid(), title:'不具合調査', createdAt:now(), children:[] }
+    ]},
+    { id:uid(), title:'開発TODO', createdAt:now(), children:[
+      { id:uid(), title:'プロンプト改善', createdAt:now(), children:[] },
+      { id:uid(), title:'画像処理の軽量化', createdAt:now(), children:[] },
+    ]}
+  ]
+};
+
+function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(root)); }
+function load(){ try{ const t=localStorage.getItem(STORAGE_KEY); return t? JSON.parse(t): null }catch(e){ return null } }
+
+// ---------------- レンダリング（罫線アウトライン） ----------------
+let openEditorFor = null; // 選択中ノードの id
+
+function render(){
+  const host = $('tree');
+  host.innerHTML = '';
+  const lines = buildOutlineLines(root);
+  if(!lines.length){
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '（項目はまだありません。右上の「最上位を追加」から作成してください）';
+    host.appendChild(empty);
+    return;
+  }
+  lines.forEach(lineInfo=>{
+    const row = document.createElement('div');
+    row.className = 'line' + (openEditorFor===lineInfo.node.id? ' active':'');
+    row.dataset.id = lineInfo.node.id;
+
+    const prefix = document.createElement('span');
+    prefix.className = 'mut';
+    prefix.textContent = lineInfo.prefix;
+
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = lineInfo.node.title || '(無題)';
+
+    row.appendChild(prefix);
+    row.appendChild(title);
+    host.appendChild(row);
+
+    row.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(openEditorFor===lineInfo.node.id){ openEditorFor=null; render(); return; }
+      openEditorFor = lineInfo.node.id; render();
+    });
+
+    if(openEditorFor===lineInfo.node.id){
+      host.appendChild(buildPopover(lineInfo.node));
+    }
+  });
+}
+
+function buildOutlineLines(root){
+  const out=[];
+  const walk=(node, flags)=>{
+    if(node!==root){
+      out.push({ node, prefix: makePrefix(flags) });
+    }
+    const kids = node.children;
+    kids.forEach((child, idx)=> walk(child, [...flags, idx===kids.length-1]));
+  };
+  walk(root, []);
+  return out;
+}
+
+function makePrefix(flags){
+  // flags: 祖先ごとの「その階層で最終要素か？」の真偽配列
+  // 例： [false,false,true] → "│   │   └─ "
+  if(!flags.length) return '';
+  let s='';
+  for(let i=0;i<flags.length-1;i++){
+    s += flags[i] ? '    ' : '│   ';
+  }
+  s += flags[flags.length-1] ? '└─ ' : '├─ ';
+  return s;
+}
+
+// ---------------- 操作ポップオーバー ----------------
+function buildPopover(node){
+  const box = document.createElement('div');
+  box.className = 'popover';
+
+  // 子を作成
+  const btnChild = document.createElement('button');
+  btnChild.textContent = '中に項目を作る';
+  btnChild.onclick = ()=>{ node.children.push({ id:uid(), title:'新規項目', createdAt:now(), children:[] }); save(); render(); };
+
+  // 名前編集
+  let renaming = false;
+  const renameWrap = document.createElement('div');
+  renameWrap.className = 'rename';
+  const nameInput = document.createElement('input');
+  nameInput.value = node.title || '';
+  const btnStartRename = document.createElement('button');
+  btnStartRename.textContent = '項目名を編集';
+  const btnSaveRename = document.createElement('button');
+  btnSaveRename.textContent = '保存';
+  btnSaveRename.style.display='none';
+  const btnCancelRename = document.createElement('button');
+  btnCancelRename.textContent = 'キャンセル';
+  btnCancelRename.style.display='none';
+
+  btnStartRename.onclick = ()=>{
+    renaming = true;
+    nameInput.style.display='';
+    btnSaveRename.style.display='';
+    btnCancelRename.style.display='';
+    btnStartRename.style.display='none';
+    nameInput.focus();
+  };
+  btnSaveRename.onclick = ()=>{
+    node.title = nameInput.value.trim() || '(無題)';
+    save(); openEditorFor=null; render();
+  };
+  btnCancelRename.onclick = ()=>{ openEditorFor=null; render(); };
+
+  nameInput.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ btnSaveRename.click(); }
+    if(e.key==='Escape'){ btnCancelRename.click(); }
+  });
+
+  nameInput.style.display='none';
+  renameWrap.appendChild(nameInput);
+  renameWrap.appendChild(btnSaveRename);
+  renameWrap.appendChild(btnCancelRename);
+
+  // 上下に移動（同じ親内で）
+  const btnUp = document.createElement('button');
+  btnUp.textContent = '上へ移動';
+  btnUp.onclick = ()=>{ moveInSiblings(node, -1); };
+
+  const btnDown = document.createElement('button');
+  btnDown.textContent = '下へ移動';
+  btnDown.onclick = ()=>{ moveInSiblings(node, +1); };
+
+  // キャンセル
+  const btnClose = document.createElement('button');
+  btnClose.textContent = '閉じる';
+  btnClose.onclick = ()=>{ openEditorFor=null; render(); };
+
+  box.appendChild(btnChild);
+  box.appendChild(btnStartRename);
+  box.appendChild(renameWrap);
+  box.appendChild(btnUp);
+  box.appendChild(btnDown);
+  box.appendChild(btnClose);
+  return box;
+}
+
+function findParentOf(target, cur=root){
+  for(const child of cur.children){
+    if(child.id===target.id) return cur;
+    const p = findParentOf(target, child);
+    if(p) return p;
+  }
+  return null;
+}
+
+function moveInSiblings(node, delta){
+  const parent = findParentOf(node);
+  if(!parent) return; // ルート直下以外の親が見つからない場合
+  const idx = parent.children.findIndex(c=>c.id===node.id);
+  if(idx<0) return;
+  const to = idx + delta;
+  if(to<0 || to>=parent.children.length) return;
+  const arr = parent.children;
+  [arr[idx], arr[to]] = [arr[to], arr[idx]];
+  save(); render();
+}
+
+// ---------------- エクスポート（おまけ） ----------------
+function toCSV(rows, headers){
+  const esc = (s)=>{ s=s==null?'':String(s).replace(/\r?\n/g,'\n'); return /[",\n]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const lines = [headers.map(esc).join(',')];
+  rows.forEach(r=> lines.push(headers.map(h=>esc(r[h]??'')).join(',')) );
+  return lines.join('\r\n');
+}
+
+function buildOutlineRows(){
+  const rows=[];
+  const walk=(node, flags)=>{
+    if(node!==root){ rows.push({ outline: makePrefix(flags) + (node.title||'(無題)') }); }
+    node.children.forEach((c,i)=> walk(c, [...flags, i===node.children.length-1]));
+  };
+  walk(root, []);
+  return rows;
+}
+
+function download(filename, text){
+  const blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
+}
+
+$('exportCSV').onclick = ()=>{
+  const csv = toCSV(buildOutlineRows(), ['outline']);
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`outline-${stamp}.csv`, csv);
+};
+
+// ---------------- ルート操作 ----------------
+$('addRoot').onclick = ()=>{ root.children.push({ id:uid(), title:'新規項目', createdAt:now(), children:[] }); save(); render(); };
+$('reset').onclick = ()=>{ if(confirm('ツリーを初期化します。よろしいですか？')){ localStorage.removeItem(STORAGE_KEY); root = { id:'root', title:'(root)', createdAt:now(), children:[] }; openEditorFor=null; save(); render(); } };
+
+// 初期描画
+render();
+</script>
+</body>
+</html>
