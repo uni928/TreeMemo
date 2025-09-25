@@ -81,6 +81,9 @@
             <span class="space"></span>
             <button id="exportOutlineUnicode">CSV（ツリー：罫線）</button>
             <button id="exportOutlineWithContent">CSV（ツリー：罫線+本文）</button>
+            <button id="exportJSON">JSON エクスポート</button>
+            <button id="importJSON">JSON インポート</button>
+            <button id="importCSVPath">CSV インポート（path,title,content）</button>
           </div>
         </div>
         <footer>
@@ -290,19 +293,6 @@ function exportCSV_TreeOutline(style = 'unicode') {
   const tag = style === 'unicode' ? 'outline' : 'outline-asciiL';
   download(`settings-${tag}-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
 }
-
-
-// ===== 使い方例（ボタンに割り当てたい場合） =====
-// 既存 wireButtons に以下のような行を足してください：
-//   ['exportChain', () => exportCSV_PathChain()],
-//   ['exportOutlineUnicode', () => exportCSV_TreeOutline('unicode')],
-//   ['exportOutlineAsciiL', () => exportCSV_TreeOutline('asciiL')]
-
-// 例：HTML 側にボタンを追加
-// <button id="exportChain">CSV（チェーン）</button>
-// <button id="exportOutlineUnicode">CSV（ツリー：罫線）</button>
-// <button id="exportOutlineAsciiL">CSV（ツリー：l/L）</button>
-
 
 // ---------------- データモデル ----------------
 /** @typedef {{id:string,title:string,content:string,children:NodeItem[],createdAt:number}} NodeItem */
@@ -514,6 +504,201 @@ async function upOne() {
   refreshAll();
 }
 
+// ========================= エクスポート & インポート 追記 =========================
+
+// ---------- 共通：ファイル読込ユーティリティ ----------
+function openFileOnce(accept, onLoad) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = accept;
+  input.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    onLoad(text, file);
+  };
+  input.click();
+}
+
+// ---------- JSON エクスポート（ツリー全体） ----------
+function exportJSON_All() {
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    root: state.root
+  };
+  const text = JSON.stringify(payload, null, 2);
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`settings-all-${stamp}.json`, text, 'application/json;charset=utf-8;');
+}
+
+// ---------- JSON インポート（全置換 or 現在階層にマージ） ----------
+function openImportJSON() {
+  openFileOnce('.json,application/json', async (text) => {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      alert('JSON の解析に失敗しました。');
+      return;
+    }
+    // 許容フォーマット：
+    // 1) {version, root:{...}} 形式
+    // 2) 直接 NodeItem ルートオブジェクト
+    const importedRoot = data && data.root && data.root.id ? data.root : (data && data.id ? data : null);
+    if (!importedRoot || !importedRoot.id || !Array.isArray(importedRoot.children)) {
+      alert('不正なJSON形式です。（rootノードが見つかりません）');
+      return;
+    }
+
+    const mode = prompt('インポートモードを入力：\n"replace" で全置換 / "merge" で現在階層へマージ', 'merge');
+    if (mode === 'replace') {
+      if (!confirm('現在の全データを置き換えます。よろしいですか？')) return;
+      // ルートは常に id:"root" を維持する
+      state.root = { id: 'root', title: '(root)', content: '', children: [], createdAt: Date.now() };
+      // importedRoot の子をぶら下げる
+      const copy = (node) => ({
+        id: node.id || uid(),
+        title: node.title || '',
+        content: node.content || '',
+        createdAt: node.createdAt || Date.now(),
+        children: (node.children || []).map(copy)
+      });
+      state.root.children = (importedRoot.children || []).map(copy);
+      state.path = [];
+      state.selectedId = null;
+      await saveState();
+      refreshAll();
+      alert('JSON を全置換でインポートしました。');
+    } else {
+      // merge
+      const container = getCurrentContainer();
+      // importedRoot を現在階層の配下に統合（root 自身の直下ノードたちをマージ）
+      const mergeChildren = (dst, src) => {
+        // タイトル一致で同名ノードに突っ込む（無ければ作成）
+        src.forEach(schild => {
+          const found = dst.children.find(d => (d.title || '') === (schild.title || ''));
+          if (found) {
+            found.content = schild.content || found.content;
+            found.createdAt = found.createdAt || Date.now();
+            if (Array.isArray(schild.children) && schild.children.length) {
+              if (!Array.isArray(found.children)) found.children = [];
+              mergeChildren(found, schild);
+            }
+          } else {
+            const clone = {
+              id: uid(),
+              title: schild.title || '',
+              content: schild.content || '',
+              createdAt: schild.createdAt || Date.now(),
+              children: []
+            };
+            if (Array.isArray(schild.children) && schild.children.length) {
+              mergeChildren(clone, schild);
+            }
+            dst.children.push(clone);
+          }
+        });
+      };
+      mergeChildren(container, importedRoot);
+      await saveState();
+      refreshAll();
+      alert('JSON を現在階層へマージしました。');
+    }
+  });
+}
+
+// ---------- CSV パーサ（簡易・ダブルクォート対応） ----------
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, cur = '', row = [], inQ = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cur += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      } else { cur += ch; i++; continue; }
+    } else {
+      if (ch === '"') { inQ = true; i++; continue; }
+      if (ch === ',') { row.push(cur); cur = ''; i++; continue; }
+      if (ch === '\r') { i++; continue; }
+      if (ch === '\n') { row.push(cur); rows.push(row); cur = ''; row = []; i++; continue; }
+      cur += ch; i++; continue;
+    }
+  }
+  row.push(cur); rows.push(row);
+  // 末尾の空行を除去
+  return rows.filter(r => !(r.length === 1 && r[0] === '' && rows.length > 1));
+}
+
+function csvRowsToObjects(rows) {
+  if (!rows.length) return [];
+  const header = rows[0];
+  const idx = {}; header.forEach((h, i) => idx[h.trim()] = i);
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const arr = rows[r];
+    const obj = {};
+    header.forEach((h, i) => obj[h.trim()] = (arr[i] ?? '').toString());
+    out.push(obj);
+  }
+  return out;
+}
+
+// ---------- CSV（path,title,content）インポート ----------
+// 期待ヘッダ：path,title,content
+// path は '/大項目/中項目' のような絶対パス推奨。（先頭'/'なしも可：その場合はルート相対で解釈）
+// 既存に同名タイトルがあればそのノードを使用、無ければ作成。最後の階層に title/content を反映。
+function openImportCSV_PathRows() {
+  openFileOnce('.csv,text/csv', async (text) => {
+    const rows = parseCSV(text);
+    const objs = csvRowsToObjects(rows);
+    if (!objs.length) { alert('CSVが空です'); return; }
+    const hasRequired = ['path','title','content'].every(k => k in objs[0]);
+    if (!hasRequired) {
+      alert('CSV ヘッダは path,title,content を含む必要があります。');
+      return;
+    }
+    const root = state.root;
+
+    const findOrCreateChildByTitle = (parent, title) => {
+      let n = parent.children.find(c => (c.title || '') === (title || ''));
+      if (!n) {
+        n = { id: uid(), title: title || '', content: '', createdAt: Date.now(), children: [] };
+        parent.children.push(n);
+      }
+      return n;
+    };
+
+    objs.forEach(({ path, title, content }) => {
+      let cur = root;
+      let parts = (path || '').trim();
+      if (parts.startsWith('/')) parts = parts.slice(1);
+      const segs = parts ? parts.split('/').filter(Boolean) : [];
+      // 階層をたどる（中間が無ければ作る）
+      segs.forEach(seg => { cur = findOrCreateChildByTitle(cur, seg); });
+      // 最終ノードは CSV の title 名で作成 or 既存取得
+      const leaf = findOrCreateChildByTitle(cur, title || '');
+      leaf.title = title || leaf.title;
+      if (typeof content === 'string') leaf.content = content;
+    });
+
+    await saveState();
+    refreshAll();
+    alert('CSV（path,title,content）をインポートしました。');
+  });
+}
+
+// ---------- （オプション）現在ツリーを CSV（path,title,content）でエクスポート ----------
+function exportCSV_PathTitleContent() {
+  const rows = flatten(state.root); // [{path,title,content}]
+  const csv = toCSV(rows, ['path','title','content']);
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`settings-path-title-content-${stamp}.csv`, csv, 'text/csv;charset=utf-8;');
+}
+
+
 // ---------------- CSV エクスポート ----------------
 function exportCSV(mode) {
   // mode: 'title' | 'titleBody'
@@ -582,6 +767,9 @@ function wireButtons() {
     ['exportOutlineUnicode', () => exportCSV_TreeOutline('unicode')],
     ['exportOutlineAsciiL', () => exportCSV_TreeOutline('asciiL')],
     ['exportOutlineWithContent', exportCSV_TreeOutlineWithContent],
+    ['exportJSON', exportJSON_All],
+    ['importJSON', openImportJSON],
+    ['importCSVPath', openImportCSV_PathRows],
   ];
   map.forEach(([id, fn]) => {
     const el = $(id);
