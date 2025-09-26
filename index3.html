@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ツリー罫線エディタ（簡易版・root表示＆削除対応・IndexedDB+説明ペイン）</title>
+<style>
+  :root{--bg:#0b1020;--card:#111934;--ink:#e9edff;--mut:#98a3cb;--acc:#6aa6ff;--line:#2a3768;--sel:#1a2550;--pop:#0f1635;}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:linear-gradient(180deg,#091025,#0b1430);color:var(--ink);font:14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+  header{position:sticky;top:0;z-index:2;background:#0d1530;border-bottom:1px solid #1d2b59;padding:10px 12px;display:flex;gap:8px;align-items:center}
+  header h1{margin:0;font-size:14px;font-weight:700;opacity:.95}
+  header .sp{flex:1}
+  header button{border:1px solid #2a3b70;background:#18234a;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer}
+  header button:hover{border-color:#3c54a3}
+  main{max-width:1080px;margin:0 auto;padding:16px}
+  .layout{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+  .card{background:var(--card);border:1px solid #1d2b59;border-radius:12px;overflow:hidden}
+  .tree{padding:10px 12px}
+  .line{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;white-space:pre}
+  .line:hover{background:#121d43}
+  .line.active{background:var(--sel);outline:1px solid #2c3c78}
+  .line.root{background:#0e1942;border:1px dashed #2b3c7a}
+  .title{flex:1}
+  .badge{display:inline-block;padding:2px 8px;border:1px solid #2a3b70;border-radius:999px;color:#c7d2ff;background:#0f1635;font-size:12px;margin-right:6px}
+  .mut{color:var(--mut)}
+  .popover{margin:6px 0 8px 28px;background:var(--pop);border:1px solid #27346a;border-radius:10px;padding:8px;display:flex;flex-wrap:wrap;gap:8px}
+  .popover button{border:1px solid #2a3b70;background:#18234a;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer}
+  .popover button:hover{border-color:#3c54a3}
+  .rename{display:flex;gap:6px;align-items:center}
+  .rename input{background:#0f1738;border:1px solid #223162;border-radius:8px;color:var(--ink);padding:6px 8px;min-width:240px}
+  .danger{border-color:#5a1c2c !important;background:#2a0e17 !important;color:#ffd9e1 !important}
+  .empty{color:var(--mut);padding:14px}
+  footer{padding:10px 12px;border-top:1px solid #1d2b59;background:#0f1738;font-size:12px;color:#98a3cb}
+  /* 右ペイン */
+  .inspector{padding:10px 12px; display:grid; gap:8px}
+  .inspector textarea{min-height:300px; background:#0f1738; border:1px solid #223162; color:var(--ink); border-radius:8px; padding:8px}
+</style>
+</head>
+<body>
+  <header>
+    <h1>ツリー罫線エディタ（簡易版）</h1>
+    <span class="sp"></span>
+    <button id="addRoot">最上位を追加</button>
+    <button id="importCSV">CSV 読込</button>
+    <button id="reset">リセット</button>
+  </header>
+  <main>
+    <div class="layout">
+      <!-- 左：ツリー表示 -->
+      <div class="card">
+        <div id="tree" class="tree"></div>
+        <footer>
+          クリックで編集メニューを表示：子を作成 / 名前を編集 / 上下に移動 / 削除（rootは削除不可）。保存は <strong>IndexedDB</strong> に自動保存。
+        </footer>
+      </div>
+      <!-- 右：説明エディタ -->
+      <div class="card">
+        <div class="inspector">
+          <div style="display:flex; align-items:center; gap:8px">
+            <span class="badge">DETAIL</span>
+            <div id="inspectorTitle" class="title" style="font-weight:700"></div>
+          </div>
+          <label for="inspectorNote" class="mut">説明文</label>
+          <textarea id="inspectorNote" placeholder="ここに説明文を書きます"></textarea>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <button id="exportCSV">CSV（罫線）DL</button>
+            <button id="exportCSVDesc">CSV（罫線+説明, 1列）DL</button>
+            <span class="mut">※ 説明は改行を除去して後ろに連結されます</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+<script>
+// ---------------- IndexedDB ----------------
+const DB_NAME = 'simple-outline-editor-db';
+const STORE = 'tree';
+let db = null;
+
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e)=>{
+      db = e.target.result;
+      if(!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    };
+    req.onsuccess = (e)=>{ db = e.target.result; resolve(); };
+    req.onerror = (e)=> reject(e);
+  });
+}
+function idbSet(key, val){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).put(val, key);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = (e)=> reject(e);
+  });
+}
+function idbGet(key){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(STORE,'readonly');
+    const rq = tx.objectStore(STORE).get(key);
+    rq.onsuccess = ()=> resolve(rq.result);
+    rq.onerror = (e)=> reject(e);
+  });
+}
+
+// ---------------- モデル ----------------
+const $ = (id)=>document.getElementById(id);
+const uid = ()=> Math.random().toString(36).slice(2)+Date.now().toString(36);
+const now = ()=> Date.now();
+
+/** @typedef {{id:string,title:string,children:NodeItem[],createdAt:number,note?:string}} NodeItem */
+
+let root = { id:'root', title:'root', createdAt: now(), note:'', children:[] }; // 起動時に load() で置換
+
+async function save(){ await idbSet('root', root); }
+async function load(){ return await idbGet('root'); }
+
+// ---------------- レンダリング ----------------
+let openEditorFor = null; // 選択中 id
+
+function render(){
+  const host = $('tree');
+  host.innerHTML = '';
+  const lines = buildOutlineLines(root);
+  if(!lines.length){
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '（項目はまだありません。右上の「最上位を追加」から作成してください）';
+    host.appendChild(empty);
+    updateInspector();
+    return;
+  }
+  lines.forEach(lineInfo=>{
+    const row = document.createElement('div');
+    row.className = 'line' + (openEditorFor===lineInfo.node.id? ' active':'') + (lineInfo.isRoot? ' root':'');
+    row.dataset.id = lineInfo.node.id;
+
+    if(lineInfo.isRoot){
+      const b = document.createElement('span');
+      b.className = 'badge';
+      b.textContent = 'ROOT';
+      row.appendChild(b);
+    }
+
+    const prefix = document.createElement('span');
+    prefix.className = 'mut';
+    prefix.textContent = lineInfo.prefix;
+
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = lineInfo.node.title || '(無題)';
+
+    row.appendChild(prefix);
+    row.appendChild(title);
+    host.appendChild(row);
+
+    row.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(openEditorFor===lineInfo.node.id){ openEditorFor=null; render(); return; }
+      openEditorFor = lineInfo.node.id; render();
+    });
+
+    if(openEditorFor===lineInfo.node.id){
+      host.appendChild(buildPopover(lineInfo.node));
+    }
+  });
+  updateInspector();
+}
+
+function buildOutlineLines(root){
+  const out=[];
+  // root 行
+  out.push({ node: root, prefix: '', isRoot: true });
+  const walk=(node, flags)=>{
+    node.children.forEach((child, idx)=>{
+      const isLast = idx===node.children.length-1;
+      out.push({ node: child, prefix: makePrefix([...flags, isLast]), isRoot: false });
+      walk(child, [...flags, isLast]);
+    });
+  };
+  walk(root, []);
+  return out;
+}
+
+function makePrefix(flags){
+  if(!flags.length) return '';
+  let s='';
+  for(let i=0;i<flags.length-1;i++) s += flags[i] ? '    ' : '│   ';
+  s += flags[flags.length-1] ? '└─ ' : '├─ ';
+  return s;
+}
+
+// ---------------- 編集ポップオーバー ----------------
+function buildPopover(node){
+  const box = document.createElement('div');
+  box.className = 'popover';
+
+  // 子を作る
+  const btnChild = document.createElement('button');
+  btnChild.textContent = '中に項目を作る';
+  btnChild.onclick = ()=>{ node.children.push({ id:uid(), title:'新規項目', createdAt:now(), note:'', children:[] }); save(); render(); };
+
+  // 名前編集
+  const renameWrap = document.createElement('div');
+  renameWrap.className = 'rename';
+  const nameInput = document.createElement('input');
+  nameInput.value = node.title || '';
+  const btnStartRename = document.createElement('button'); btnStartRename.textContent='項目名を編集';
+  const btnSaveRename = document.createElement('button'); btnSaveRename.textContent='保存'; btnSaveRename.style.display='none';
+  const btnCancelRename = document.createElement('button'); btnCancelRename.textContent='キャンセル'; btnCancelRename.style.display='none';
+  btnStartRename.onclick=()=>{ nameInput.style.display=''; btnSaveRename.style.display=''; btnCancelRename.style.display=''; btnStartRename.style.display='none'; nameInput.focus(); };
+  btnSaveRename.onclick=()=>{ node.title = nameInput.value.trim() || (node.id==='root'?'root':'(無題)'); save(); openEditorFor=null; render(); };
+  btnCancelRename.onclick=()=>{ openEditorFor=null; render(); };
+  nameInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter') btnSaveRename.click(); if(e.key==='Escape') btnCancelRename.click(); });
+  nameInput.style.display='none';
+  renameWrap.appendChild(nameInput); renameWrap.appendChild(btnSaveRename); renameWrap.appendChild(btnCancelRename);
+
+  // 上下移動（root不可）
+  const btnUp = document.createElement('button'); btnUp.textContent='上へ移動'; btnUp.onclick=()=> moveInSiblings(node,-1);
+  const btnDown = document.createElement('button'); btnDown.textContent='下へ移動'; btnDown.onclick=()=> moveInSiblings(node,+1);
+
+  // 削除（root不可）
+  const btnDelete = document.createElement('button'); btnDelete.textContent='項目を削除'; btnDelete.className='danger'; btnDelete.onclick=()=> deleteNode(node);
+
+  const btnClose = document.createElement('button'); btnClose.textContent='閉じる'; btnClose.onclick=()=>{ openEditorFor=null; render(); };
+
+  box.appendChild(btnChild);
+  box.appendChild(btnStartRename);
+  box.appendChild(renameWrap);
+  if(node.id!=='root') { box.appendChild(btnUp); box.appendChild(btnDown); box.appendChild(btnDelete); }
+  box.appendChild(btnClose);
+  return box;
+}
+
+function findParentOf(target, cur=root){
+  for(const child of cur.children){
+    if(child.id===target.id) return cur;
+    const p = findParentOf(target, child);
+    if(p) return p;
+  }
+  return null; // root など
+}
+
+function moveInSiblings(node, delta){
+  const parent = findParentOf(node);
+  if(!parent) return; // root
+  const idx = parent.children.findIndex(c=>c.id===node.id);
+  if(idx<0) return;
+  const to = idx + delta;
+  if(to<0 || to>=parent.children.length) return;
+  const arr = parent.children; [arr[idx], arr[to]] = [arr[to], arr[idx]];
+  save(); render();
+}
+
+function deleteNode(node){
+  if(node.id==='root'){ alert('root は削除できません'); return; }
+  const parent = findParentOf(node); if(!parent) return;
+  if(!confirm(`「${node.title||'(無題)'}」を削除します。よろしいですか？\n（配下の項目もまとめて削除されます）`)) return;
+  const idx = parent.children.findIndex(c=>c.id===node.id);
+  if(idx>=0){ parent.children.splice(idx,1); save(); openEditorFor=null; render(); }
+}
+
+// ---------------- CSV 出力 + 右ペイン（説明） ----------------
+function toCSV(rows, headers){
+  const esc = (s)=>{ s=s==null?'':String(s).replace(/\r?\n/g,'\n'); return /[",\n]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const lines = [headers.map(esc).join(',')];
+  rows.forEach(r=> lines.push(headers.map(h=>esc(r[h]??'')).join(',')) );
+  return lines.join('\r\n');
+}
+
+function buildOutlineRows(){
+  const rows=[]; rows.push({ outline:(root.title||'root') });
+  const walk=(node, flags)=>{
+    node.children.forEach((c,i)=>{
+      rows.push({ outline: makePrefix([...flags, i===node.children.length-1]) + (c.title||'(無題)') });
+      walk(c, [...flags, i===node.children.length-1]);
+    });
+  };
+  walk(root, []); return rows;
+}
+
+function oneLine(s){ return (s||'').replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim(); }
+function buildOutlineRowsWithDesc(){
+  const rows=[]; rows.push({ outline:(root.title||'root') + (root.note? (' — '+oneLine(root.note)) : '') });
+  const walk=(node, flags)=>{
+    node.children.forEach((c,i)=>{
+      const base = makePrefix([...flags, i===node.children.length-1]) + (c.title||'(無題)');
+      const tail = c.note? (' — '+oneLine(c.note)) : '';
+      rows.push({ outline: base + tail });
+      walk(c, [...flags, i===node.children.length-1]);
+    });
+  };
+  walk(root, []); return rows;
+}
+
+function download(filename, text){
+  const blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
+}
+
+$('exportCSV').onclick = ()=>{
+  const csv = toCSV(buildOutlineRows(), ['outline']);
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`outline-${stamp}.csv`, csv);
+};
+$('exportCSVDesc').onclick = ()=>{
+  const csv = toCSV(buildOutlineRowsWithDesc(), ['outline']);
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+  download(`outline-with-desc-${stamp}.csv`, csv);
+};
+
+// ---------------- インポート（CSV） ----------------
+function openFileOnce(accept, onLoad){
+  const input = document.createElement('input');
+  input.type='file'; input.accept=accept;
+  input.onchange = async (e)=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const text=await f.text(); onLoad(text,f); };
+  input.click();
+}
+
+function parseCSV(text){
+  const rows=[]; let i=0,cur='',row=[],q=false;
+  while(i<text.length){ const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){cur+='"'; i+=2; continue;} q=false; i++; continue;} cur+=ch; i++; continue; }
+    if(ch==='"'){ q=true; i++; continue; }
+    if(ch===','){ row.push(cur); cur=''; i++; continue; }
+    if(ch==='\r'){ i++; continue; }
+    if(ch==='\n'){ row.push(cur); rows.push(row); cur=''; row=[]; i++; continue; }
+    cur+=ch; i++; }
+  row.push(cur); rows.push(row); return rows.filter(r=>!(r.length===1&&r[0]===''));
+}
+function csvRowsToObjects(rows){ if(!rows.length) return []; const header=rows[0]; const idx={}; header.forEach((h,i)=>idx[h.trim()]=i); const out=[]; for(let r=1; r<rows.length; r++){ const arr=rows[r]; const obj={}; header.forEach((h,i)=> obj[h.trim()] = (arr[i]??'').toString()); out.push(obj);} return out; }
+
+ function parseOutlineLine(s){
+   // タイトルと説明（ — 以降）に分割
+   const splitTitleDesc = (text) => {
+     const SEP = ' — ';
+     const i = text.indexOf(SEP);
+     if (i === -1) return { title: text.trim(), note: '' };
+     return { title: text.slice(0, i).trim(), note: text.slice(i + SEP.length).trim() };
+   };
+ 
+   // 罫線なし（root 行など）
+   if(!/├─ |└─ /.test(s)){
+     const { title, note } = splitTitleDesc(s);
+     return { depth:0, title, note };
+   }
+   // 罫線あり（子孫行）
+   const m = s.match(/^(.*?)(├─ |└─ )(.*)$/);
+   if(!m){
+     const { title, note } = splitTitleDesc(s);
+     return { depth:0, title, note };
+   }
+   const prefix = m[1];
+   const tail = m[3].trim();
+   const { title, note } = splitTitleDesc(tail);
+   let depth = 0;
+   for(let i=0;i<prefix.length;){
+     if(prefix.startsWith('│   ', i) || prefix.startsWith('    ', i)){ depth++; i+=4; }
+     else { i++; }
+   }
+   return { depth: depth+1, title, note };
+ }
+
+$('importCSV').onclick = ()=>{
+  openFileOnce('.csv,text/csv', async (text)=>{
+    const rows = csvRowsToObjects(parseCSV(text));
+    if(!rows.length || !('outline' in rows[0])){ alert('CSVヘッダに outline 列が必要です'); return; }
+    const newRoot = { id:'root', title:'root', createdAt:Date.now(), note:'', children:[] };
+    const stack = [newRoot];
+    rows.forEach(r=>{
+      const s = (r.outline||'').toString(); if(!s.trim()) return;
+      const { depth, title, note } = parseOutlineLine(s);
+      if(depth===0){ newRoot.title = title || 'root'; newRoot.note = note || ''; return; }
+    
+      while(stack.length>depth) stack.pop();
+      while(stack.length<depth) stack.push(stack[stack.length-1]);
+      const parent = stack[depth-1] || newRoot;
+      const node = { id:uid(), title: title||'(無題)', createdAt:Date.now(), note: note||'', children:[] };
+      parent.children.push(node);
+      stack[depth] = node;
+    });
+    root = newRoot; await save(); render(); alert('CSV をインポートしました');
+  });
+};
+
+// ---------- 右ペイン：説明エディタ連動 ----------
+function findById(id, cur=root){ if(!id) return null; if(cur.id===id) return cur; for(const c of cur.children){ const f=findById(id,c); if(f) return f; } return null; }
+function updateInspector(){
+  const title = document.getElementById('inspectorTitle');
+  const note = document.getElementById('inspectorNote');
+  const node = findById(openEditorFor||root.id) || root;
+  if(title) title.textContent = node.title || (node.id==='root'?'root':'(無題)');
+  if(note){
+    note.value = node.note||'';
+    note.oninput = ()=>{ node.note = note.value; save(); };
+  }
+}
+
+// ---------------- ルート操作＆起動 ----------------
+document.getElementById('addRoot').onclick = ()=>{ root.children.push({ id:uid(), title:'新規項目', createdAt:now(), note:'', children:[] }); save(); render(); };
+document.getElementById('reset').onclick = async ()=>{ if(confirm('ツリーを初期化します。よろしいですか？')){ root = { id:'root', title:'root', createdAt:now(), note:'', children:[] }; await save(); openEditorFor=null; render(); } };
+
+(async()=>{
+  await openDB();
+  const loaded = await load();
+  if(loaded && loaded.id){ root = loaded; }
+  // 既存データに note を補完
+  const fill=(n)=>{ if(typeof n.note!=="string") n.note=''; (n.children||[]).forEach(fill); };
+  fill(root);
+  openEditorFor = root.id; // 初期は root を選択
+  render();
+})();
+</script>
+</body>
+</html>
