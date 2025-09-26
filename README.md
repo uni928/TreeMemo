@@ -2,7 +2,7 @@
 
 [# 旧版2(非推奨)](https://uni928.github.io/TreeMemo/index2.html)
 
-[# 本体はこちら](https://uni928.github.io/TreeMemo/index2.html)
+[# 本体はこちら](https://uni928.github.io/TreeMemo/index3.html)
 
 ツリー構造のメモ帳です。
 
