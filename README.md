@@ -1,6 +1,8 @@
-[# TreeMemo](https://uni928.github.io/TreeMemo/)
+[# 旧版1(非推奨)](https://uni928.github.io/TreeMemo/)
 
-[# TreeMemo(簡易版)](https://uni928.github.io/TreeMemo/index2.html)
+[# 旧版2(非推奨)](https://uni928.github.io/TreeMemo/index2.html)
+
+[# 本体はこちら](https://uni928.github.io/TreeMemo/index2.html)
 
 ツリー構造のメモ帳です。
 
