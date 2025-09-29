@@ -7,7 +7,7 @@
 <style>
   :root{--bg:#0b1020;--card:#111934;--ink:#e9edff;--mut:#98a3cb;--acc:#6aa6ff;--line:#2a3768;--sel:#1a2550;--pop:#0f1635;}
   *{box-sizing:border-box}
-  html,body{height:100%}
+  html,body{min-height:100%}
   body{margin:0;background:linear-gradient(180deg,#091025,#0b1430);color:var(--ink);font:14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
   header{position:sticky;top:0;z-index:2;background:#0d1530;border-bottom:1px solid #1d2b59;padding:10px 12px;display:flex;gap:8px;align-items:center}
   header h1{margin:0;font-size:14px;font-weight:700;opacity:.95}
@@ -16,7 +16,7 @@
   header button:hover{border-color:#3c54a3}
   main{max-width:1080px;margin:0 auto;padding:16px}
   .layout{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
-  .card{background:var(--card);border:1px solid #1d2b59;border-radius:12px;overflow:hidden}
+  .card{background:var(--card);border:1px solid #1d2b59;border-radius:12px;overflow:visible}
   .tree{padding:10px 12px; overflow-x:auto; -webkit-overflow-scrolling:touch}
   .line{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;white-space:pre; min-width:max-content}
   .line:hover{background:#121d43}
@@ -33,15 +33,10 @@
   .danger{border-color:#5a1c2c !important;background:#2a0e17 !important;color:#ffd9e1 !important}
   .empty{color:var(--mut);padding:14px}
   footer{padding:10px 12px;border-top:1px solid #1d2b59;background:#0f1738;font-size:12px;color:#98a3cb}
-/* --- スマホ向け調整 --- */
-@media (max-width: 768px){
-  /* 罫線を保ちつつ、長いタイトルは折り返す */
-  .line{white-space:pre-wrap; word-break:break-word;}
-  /* 余白を少し詰める */
-  .line{padding:6px 6px;}
-  /* ツリーの横幅制限を解除し、見切れを防ぐ */
-  .tree{max-width:100%;}
-}
+  @media (max-width: 768px){
+    /* 罫線を保ちつつ長文タイトルを折り返し表示 */
+    .line{white-space:pre-wrap; word-break:break-word;}
+  }
   /* 右ペイン */
   .inspector{padding:10px 12px; display:grid; gap:8px}
   .inspector textarea{min-height:300px; background:#0f1738; border:1px solid #223162; color:var(--ink); border-radius:8px; padding:8px}
