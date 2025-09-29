@@ -247,20 +247,37 @@ function buildPopover(node){
   btnChild.textContent = '中に項目を作る';
   btnChild.onclick = ()=>{ node.children.push({ id:uid(), title:'新規項目', createdAt:now(), note:'', children:[] }); save(); render(); };
 
-  // 名前編集
+  // 名前編集（リアルタイムセーブ）
   const renameWrap = document.createElement('div');
   renameWrap.className = 'rename';
   const nameInput = document.createElement('input');
   nameInput.value = node.title || '';
   const btnStartRename = document.createElement('button'); btnStartRename.textContent='項目名を編集';
-  const btnSaveRename = document.createElement('button'); btnSaveRename.textContent='保存'; btnSaveRename.style.display='none';
-  const btnCancelRename = document.createElement('button'); btnCancelRename.textContent='キャンセル'; btnCancelRename.style.display='none';
-  btnStartRename.onclick=()=>{ nameInput.style.display=''; btnSaveRename.style.display=''; btnCancelRename.style.display=''; btnStartRename.style.display='none'; nameInput.focus(); };
-  btnSaveRename.onclick=()=>{ node.title = nameInput.value.trim() || (node.id==='root'?'root':'(無題)'); save(); openEditorFor=null; render(); };
-  btnCancelRename.onclick=()=>{ openEditorFor=null; render(); };
-  nameInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter') btnSaveRename.click(); if(e.key==='Escape') btnCancelRename.click(); });
+  btnStartRename.onclick = ()=>{
+    nameInput.style.display='';
+    // 入力中に即保存
+    nameInput.focus({ preventScroll:true });
+    nameInput.select();
+  };
+  // 入力のたびに保存＆左ツリーの表示も即時更新
+  nameInput.addEventListener('input', ()=>{
+    const newTitle = (nameInput.value || '').trim() || (node.id==='root' ? 'root' : '(無題)');
+    if (node.title !== newTitle) {
+      node.title = newTitle;
+      save();
+      const rowTitle = document.querySelector(`.line[data-id=\"${node.id}\"] .title`);
+      if (rowTitle) rowTitle.textContent = newTitle;
+    }
+  });
+  // Esc で入力欄を一旦隠す（保存は済んでいる）
+  nameInput.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape') {
+      nameInput.blur();
+      nameInput.style.display='none';
+    }
+  });
   nameInput.style.display='none';
-  renameWrap.appendChild(nameInput); renameWrap.appendChild(btnSaveRename); renameWrap.appendChild(btnCancelRename);
+  renameWrap.appendChild(nameInput);
 
   // 上下移動（root不可）
   const btnUp = document.createElement('button'); btnUp.textContent='上へ移動'; btnUp.onclick=()=> moveInSiblings(node,-1);
