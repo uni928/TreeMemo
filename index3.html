@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -32,6 +33,22 @@
   .rename input{background:#0f1738;border:1px solid #223162;border-radius:8px;color:var(--ink);padding:6px 8px;min-width:240px}
   .danger{border-color:#5a1c2c !important;background:#2a0e17 !important;color:#ffd9e1 !important}
   .empty{color:var(--mut);padding:14px}
+/* 移動モード通知バー */
+.movebar{
+  margin:6px 12px 0;
+  background:#0f1635;
+  border:1px dashed #3b4a86;
+  color:var(--ink);
+  padding:8px 10px;
+  border-radius:8px;
+  display:flex; align-items:center; gap:8px;
+}
+.movebar .mut{color:var(--mut)}
+.movebar button{
+  border:1px solid #2a3b70;background:#18234a;color:var(--ink);
+  border-radius:8px;padding:4px 8px;cursor:pointer
+}
+.movebar button:hover{border-color:#3c54a3}
   footer{padding:10px 12px;border-top:1px solid #1d2b59;background:#0f1738;font-size:12px;color:#98a3cb}
   @media (max-width: 768px){
     /* 罫線を保ちつつ長文タイトルを折り返し表示 */
@@ -126,10 +143,23 @@ async function load(){ return await idbGet('root'); }
 
 // ---------------- レンダリング ----------------
 let openEditorFor = null; // 選択中 id
+let moveSourceId = null;   // 移動モード時の「移動元ノードID」
 
 function render(){
   const host = $('tree');
   host.innerHTML = '';
+  // 移動モード中なら通知バーを先に表示
+  if (moveSourceId) {
+    const src = findById(moveSourceId) || { title:'(不明)' };
+    const bar = document.createElement('div');
+    bar.className = 'movebar';
+    bar.innerHTML = `<span class="mut">移動モード:</span>「${(src.title||'(無題)')}」の <b>移動先</b> をクリックしてください。`;
+    const cancel = document.createElement('button');
+    cancel.textContent = 'キャンセル';
+    cancel.onclick = ()=>{ moveSourceId = null; render(); };
+    bar.appendChild(cancel);
+    host.appendChild(bar);
+  }
   const lines = buildOutlineLines(root);
   if(!lines.length){
     const empty = document.createElement('div');
@@ -165,8 +195,16 @@ function render(){
 
     row.addEventListener('click', (e)=>{
       e.stopPropagation();
-      if(openEditorFor===lineInfo.node.id){ openEditorFor=null; render(); return; }
-      openEditorFor = lineInfo.node.id; render();
+      if (moveSourceId) {
+        // 移動モード中：この行を移動先に確定
+        handleMoveTarget(lineInfo.node);
+      } else {
+        if (openEditorFor === lineInfo.node.id) {
+          openEditorFor = null; render();
+        } else {
+          openEditorFor = lineInfo.node.id; render();
+        }
+      }
     });
 
     if(openEditorFor===lineInfo.node.id){
@@ -228,6 +266,17 @@ function buildPopover(node){
   const btnUp = document.createElement('button'); btnUp.textContent='上へ移動'; btnUp.onclick=()=> moveInSiblings(node,-1);
   const btnDown = document.createElement('button'); btnDown.textContent='下へ移動'; btnDown.onclick=()=> moveInSiblings(node,+1);
 
+  // 再親化（別要素の中へ移動）
+  const btnReparent = document.createElement('button');
+  btnReparent.textContent = '移動（別の要素の中へ）';
+  btnReparent.onclick = ()=>{
+    if(node.id==='root'){ alert('root は移動できません'); return; }
+    moveSourceId = node.id;
+    openEditorFor = null;
+    render();
+    alert('移動先の要素をクリックしてください（root も可）');
+  };
+
   // 削除（root不可）
   const btnDelete = document.createElement('button'); btnDelete.textContent='項目を削除'; btnDelete.className='danger'; btnDelete.onclick=()=> deleteNode(node);
 
@@ -236,8 +285,7 @@ function buildPopover(node){
   box.appendChild(btnChild);
   box.appendChild(btnStartRename);
   box.appendChild(renameWrap);
-  if(node.id!=='root') { box.appendChild(btnUp); box.appendChild(btnDown); box.appendChild(btnDelete); }
-  box.appendChild(btnClose);
+  if(node.id!=='root') { box.appendChild(btnUp); box.appendChild(btnDown); box.appendChild(btnReparent); box.appendChild(btnDelete); }
   return box;
 }
 
@@ -405,6 +453,32 @@ function updateInspector(){
     note.oninput = ()=>{ node.note = note.value; save(); };
   }
 }
+
+// src が target を（自分自身含め）内包していないか確認
+function containsNode(rootNode, target){
+  if(!rootNode || !target) return false;
+  if(rootNode.id === target.id) return true;
+  return (rootNode.children||[]).some(ch => containsNode(ch, target));
+}
+
+// 移動先確定処理：moveSourceId のノードを target の子にする
+function handleMoveTarget(target){
+  const src = findById(moveSourceId);
+  if(!src){ moveSourceId=null; return; }
+  if(target.id === src.id){ alert('自分自身の中へは移動できません'); return; }
+  if(containsNode(src, target)){ alert('自分の配下へは移動できません'); return; }
+  const fromParent = findParentOf(src);
+  if(!fromParent){ alert('root は移動できません'); moveSourceId=null; return; }
+  // 元の親から取り外し
+  const i = fromParent.children.findIndex(c=>c.id===src.id);
+  if(i>=0) fromParent.children.splice(i,1);
+  // 新しい親（target）の子に追加
+  target.children = target.children || [];
+  target.children.push(src);
+  moveSourceId = null;
+  save(); render();
+}
+
 
 // ---------------- ルート操作＆起動 ----------------
 document.getElementById('addRoot').onclick = ()=>{ root.children.push({ id:uid(), title:'新規項目', createdAt:now(), note:'', children:[] }); save(); render(); };
