@@ -17,8 +17,8 @@
   main{max-width:1080px;margin:0 auto;padding:16px}
   .layout{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
   .card{background:var(--card);border:1px solid #1d2b59;border-radius:12px;overflow:hidden}
-  .tree{padding:10px 12px}
-  .line{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;white-space:pre}
+  .tree{padding:10px 12px; overflow-x:auto; -webkit-overflow-scrolling:touch}
+  .line{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;white-space:pre; min-width:max-content}
   .line:hover{background:#121d43}
   .line.active{background:var(--sel);outline:1px solid #2c3c78}
   .line.root{background:#0e1942;border:1px dashed #2b3c7a}
