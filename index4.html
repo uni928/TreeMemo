@@ -183,54 +183,65 @@ function repeat(str, n){ return new Array(n+1).join(str); }
  *  - ├─ / └─ の判定：同レベル以降の行が存在すれば ├─、無ければ └─
  *  - 祖先レベルの縦線：その祖先に後続の兄弟がいれば │、無ければ 空白
  */
-function renderTreeFromLines(lines, indentUnit=2){
+function renderTreeFromLines(lines, indentUnit = 2) {
   const depths = lines.map(l => countLeadingSpaces(l));
-  const labels = lines.map(l => l.replace(/^([ \u3000]+)/, '')); // 先頭スペース削除
+  const labels = lines.map(l => l.replace(/^([ \u3000]+)/, ''));
 
-  // 同レベルの次兄弟が存在するかを調べる関数
-  function hasNextSiblingAt(i, level){
-    for(let k=i+1; k<lines.length; k++){
-      if(depths[k] < level) return false;       // 親より浅くなった→なし
-      if(depths[k] === level) return true;      // 次の兄弟を発見
+  function hasNextSiblingAt(i, level) {
+    for (let k = i + 1; k < lines.length; k++) {
+      if (depths[k] < level) return false;
+      if (depths[k] === level) return true;
     }
     return false;
   }
 
   const out = [];
-  for(let i=0;i<lines.length;i++){
+  for (let i = 0; i < lines.length; i++) {
     const d = depths[i];
     const label = labels[i] || '';
 
-    if(d === 0){
+    // --- ルート ---
+    if (d === 0) {
       out.push(`<span class="tree-line"><span class="root">${escapeHtml(label)}</span></span>`);
       continue;
     }
 
-    // 祖先レベルの縦線を構築
-    let prefixParts = [];
-    for(let lvl=1; lvl<d; lvl++){
-      // 祖先レベル lvl において、この行の属する親に後続兄弟がいるか？
-      const ancestorHasNext = hasNextSiblingAt(i, lvl);
-      if(ancestorHasNext){
-        prefixParts.push(`<span class="guide">│</span>` + repeat(' ', indentUnit-1));
-      }else{
-        prefixParts.push(repeat(' ', indentUnit));
-      }
-    }
-
-    // 現在レベルの枝（├─ または └─）
+    // --- ├ or └ ---
     const isLast = !hasNextSiblingAt(i, d);
     const branch = isLast
       ? `<span class="last">└</span><span class="guide">─</span>`
       : `<span class="mid">├</span><span class="guide">─</span>`;
 
-    const spacer = repeat(' ', Math.max(0, indentUnit-1));
-    const prefix = prefixParts.join('') + branch + spacer + ' ';
-    out.push(`<span class="tree-line">${prefix}<span class="text">${escapeHtml(label)}</span></span>`);
+    // --- 各階層ブロックを一定幅に固定（│と├/└を同じ位置に） ---
+    let prefixParts = [];
+    const blockWidth = 4; // 各階層の固定幅（│, ├, └の位置を統一）
+    for (let lvl = 1; lvl < d; lvl++) {
+      const ancestorHasNext = hasNextSiblingAt(i, lvl);
+      if (ancestorHasNext) {
+        prefixParts.push(`<span class="guide">│</span>${' '.repeat(blockWidth - 1)}`);
+      } else {
+        prefixParts.push(' '.repeat(blockWidth));
+      }
+    }
+
+    // --- 深さ1以上で先頭にスペース2個追加 ---
+    const baseIndent = d > 0 ? '  ' : '';
+
+    const prefix = `${baseIndent}${prefixParts.join('')}${branch} `;
+    out.push(
+      `<span class="tree-line">${prefix}<span class="text">${escapeHtml(label)}</span></span>`
+    );
   }
 
-  return out.join("\n");
+  return out.join('\n');
 }
+
+
+
+
+
+
+
 
 function escapeHtml(s){
   return s.replace(/[&<>\"']/g, m=>({
@@ -312,18 +323,37 @@ monoToggle.addEventListener('change', ()=>{
   }
 });
 
-// 書き出し/読み込み
-$('#btnExport').addEventListener('click', ()=>{
-  const blob = new Blob([editor.value.replace(/\r\n?/g,'\n')], {type:'text/plain;charset=utf-8'});
+// 既存の 「// 書き出し/読み込み」 セクションのエクスポート部分を差し替え
+$('#btnExport').addEventListener('click', () => {
+  // previewのHTMLからテキストを抽出（タグ除去して見た目どおりに出力）
+  const previewText = $('#preview').innerText;
+  const blob = new Blob([previewText], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'hieronote.txt'; a.click();
+  a.href = url;
+  a.download = 'hieronote_tree.txt';
+  a.click();
   URL.revokeObjectURL(url);
 });
+
+// 同セクションのインポート部分を差し替え
 $('#fileImport').addEventListener('change', async (e)=>{
   const f = e.target.files[0]; if(!f) return;
   const txt = await f.text();
-  editor.value = txt; updatePreview(); scheduleSave();
+  const indentUnit = parseInt(indentWidthSelect.value,10) || 2;
+
+  let nextEditor;
+  if(/[├└│]/.test(txt)){
+    // 記号入りツリー → スペース階層へ復元
+    nextEditor = parseTreeTextToSpaces(txt, indentUnit);
+  }else{
+    // 従来フォーマット（スペース階層）のまま
+    nextEditor = txt.replace(/\r\n?/g,'\n');
+  }
+
+  editor.value = nextEditor.replaceAll("  ", " ");
+  updatePreview();
+  scheduleSave();
   e.target.value = '';
 });
 
@@ -338,6 +368,78 @@ $('#fileImport').addEventListener('change', async (e)=>{
   }catch(err){ console.warn('DB load failed', err); }
   updatePreview(); markSaved();
 })();
+
+/** HTMLを使わないプレーンなツリー文字列（├─│└）を生成 */
+function renderTreePlain(lines, indentUnit = 2){
+  const depths = lines.map(l => countLeadingSpaces(l));
+  const labels = lines.map(l => l.replace(/^([ \u3000]+)/, ''));
+
+  function hasNextSiblingAt(i, level){
+    for(let k=i+1; k<lines.length; k++){
+      if(depths[k] < level) return false;
+      if(depths[k] === level) return true;
+    }
+    return false;
+  }
+
+  const out = [];
+  for(let i=0;i<lines.length;i++){
+    const d = depths[i];
+    const label = (labels[i] || '');
+
+    if(d === 0){
+      out.push(label);
+      continue;
+    }
+
+    // 祖先レベルの縦線/空白
+    let prefixParts = [];
+    for(let lvl=1; lvl<d; lvl++){
+      const ancestorHasNext = hasNextSiblingAt(i, lvl);
+      if(ancestorHasNext){
+        prefixParts.push('│' + ' '.repeat(Math.max(0, indentUnit-1)));
+      }else{
+        prefixParts.push(' '.repeat(indentUnit));
+      }
+    }
+
+    const isLast = !hasNextSiblingAt(i, d);
+    const branch = (isLast ? '└' : '├') + '─';
+    const spacer = ' '.repeat(Math.max(0, indentUnit-1)) + ' ';
+    out.push(prefixParts.join('') + branch + spacer + label);
+  }
+  return out.join('\n');
+}
+
+/** ツリー記号（├─│└）入りのテキストを解析し、スペース階層テキストへ復元 */
+function parseTreeTextToSpaces(text, indentUnit = 2){
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  for(const rawLine of lines){
+    const line = rawLine.replace(/\s+$/,''); // 末尾空白は無視
+    if(line.trim() === ''){
+      out.push('');
+      continue;
+    }
+
+    // ├ or └ があるかをチェック（想定：エクスポート形式）
+    const m = line.match(/^(.*?)([├└])─\s*(.*)$/);
+    if(m){
+      const prefix = m[1] || '';
+      const label  = m[3] || '';
+
+      // prefix はレベルごとに indentUnit 文字（'│' + 空白×(indentUnit-1) もしくは 空白×indentUnit）
+      // → グループ数 = Math.floor(prefix.length / indentUnit) が「祖先レベル数」
+      const ancestorGroups = Math.floor(prefix.length / indentUnit);
+      const depth = ancestorGroups + 1; // 現在レベル分を +1
+      out.push(' '.repeat(depth) + label);
+    }else{
+      // ルート行（記号なし）とみなす
+      out.push(line.trim());
+    }
+  }
+  return out.join('\n');
+}
 
 </script>
 </body>
