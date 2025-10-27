@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>階層メモ帳｜IndexedDB＋自動ツリー整形</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --bg: #0b1020; /* 深い藍 */
+    --panel: #0f172a; /* slate-900 */
+    --panel-2: #111827; /* gray-900 */
+    --ink: #e5e7eb; /* gray-200 */
+    --ink-dim: #94a3b8; /* slate-400 */
+    --ac: #7dd3fc; /* sky-300 */
+    --ac-2:#22d3ee; /* cyan-400 */
+    --ok:#34d399; /* emerald */
+  }
+  html,body{height:100%;}
+  body{background: radial-gradient(1200px 600px at 20% -10%, rgba(34,211,238,.12), transparent 40%),
+                     radial-gradient(800px 500px at 90% 10%, rgba(125,211,252,.10), transparent 50%),
+                     linear-gradient(180deg, #0a0f1e 0%, #0b1020 100%);
+       color:var(--ink); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";}
+  .brand{letter-spacing:.06em;}
+  .kbd{font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+  .mono{font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+  textarea{tab-size:2;}
+  .glass{background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); box-shadow: inset 0 1px 0 rgba(255,255,255,.04);}
+  .btn{--tw-ring-offset-shadow:0 0 #0000; --tw-ring-shadow:0 0 #0000; transition:.15s ease;
+       background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02));}
+  .btn:hover{transform: translateY(-1px);}
+  .status-dot{width:8px;height:8px;border-radius:9999px;}
+  .shadow-soft{box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);}
+  /* プレビューの行ハイライトとガイド */
+  .tree-line{white-space:pre;}
+  .tree-line .guide{color:#64748b;} /* slate-500 */
+  .tree-line .leaf{color:#e2e8f0;} /* slate-200 */
+  .tree-line .last{color:#93c5fd;} /* blue-300 */
+  .tree-line .mid{color:#67e8f9;} /* cyan-300 */
+  .tree-line .root{color:#a5b4fc;} /* indigo-300 */
+  .tree-line .text{color:#e5e7eb;}
+  .ghost{opacity:.6}
+  ::selection{background:#22d3ee33;}
+</style>
+</head>
+<body>
+  <div class="max-w-7xl mx-auto p-4 md:p-8">
+    <header class="flex items-center justify-between mb-4 md:mb-6">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-2xl bg-gradient-to-br from-cyan-400/70 to-sky-500/40 shadow-soft"></div>
+        <div>
+          <h1 class="brand text-xl md:text-2xl font-extrabold tracking-wide">階層メモ帳</h1>
+          <p class="text-xs text-slate-400">半角/全角スペース→ツリー記号に自動整形・IndexedDB自動保存</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span id="saveStatus" class="flex items-center gap-2 text-slate-400"><span class="status-dot bg-slate-500" id="statusDot"></span>保存済み</span>
+        <button id="btnExport" class="btn px-3 py-2 rounded-xl border border-white/10 text-slate-200">書き出し</button>
+        <label class="btn px-3 py-2 rounded-xl border border-white/10 text-slate-200 cursor-pointer">
+          読み込み<input id="fileImport" type="file" accept=".txt" class="hidden" />
+        </label>
+      </div>
+    </header>
+
+    <main class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+      <!-- Editor -->
+      <section class="glass rounded-2xl p-3 md:p-4 border border-white/10 shadow-soft">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400">EDITOR</h2>
+          <div class="text-xs text-slate-400">スペースの数で階層を表現（全角/半角どちらでも）</div>
+        </div>
+        <textarea id="editor" class="mono w-full h-[45vh] lg:h-[70vh] resize-vertical bg-transparent outline-none p-3 rounded-xl border border-white/10 focus:border-cyan-400/60"
+          placeholder="root\n  新規項目\n    新規項目\n    新規項目\n  新規項目\n    新規項目\n">
+root
+  新規項目
+    新規項目
+      新規項目
+      新規項目
+    新規項目
+      新規項目
+      新規項目
+  新規項目
+</textarea>
+        <div class="flex items-center justify-between mt-3">
+          <div class="text-xs text-slate-400">
+            <span class="kbd">Tab</span>/<span class="kbd">Shift+Tab</span> でインデント、<span class="kbd">Ctrl/Cmd+S</span> は即保存
+          </div>
+          <div class="flex items-center gap-2 text-xs text-slate-400">
+            深さあたりのインデント幅：
+            <select id="indentWidth" class="bg-transparent border border-white/10 rounded-lg px-2 py-1">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+            文字幅固定：<label class="inline-flex items-center gap-2"><input id="monoToggle" type="checkbox" checked class="accent-cyan-400"> <span>等幅表示</span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Preview -->
+      <section class="glass rounded-2xl p-3 md:p-4 border border-white/10 shadow-soft">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm uppercase tracking-widest text-slate-400">PREVIEW（自動整形）</h2>
+          <div class="text-xs text-slate-400">表示は ├─ / │ / └─ に自動変換します（内部データはスペースのまま保存）</div>
+        </div>
+        <div id="preview" class="mono text-[14px] leading-6 whitespace-pre-wrap px-3 py-2 rounded-xl bg-black/10 border border-white/10 h-[45vh] lg:h-[70vh] overflow-auto"></div>
+      </section>
+    </main>
+
+    <footer class="mt-6 text-center text-xs text-slate-500">
+      © 2025 階層メモ帳 — Auto tree rendering & IndexedDB persistence
+    </footer>
+  </div>
+
+<script>
+// ===== IndexedDB Minimal Wrapper =====
+const DB_NAME = 'hieronote-db';
+const DB_STORE = 'docs';
+const DB_VERSION = 1;
+let db;
+function openDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(DB_STORE)){
+        db.createObjectStore(DB_STORE, { keyPath:'id' });
+      }
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbGet(id){
+  db = db || await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const st = tx.objectStore(DB_STORE);
+    const req = st.get(id);
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbPut(obj){
+  db = db || await openDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    const st = tx.objectStore(DB_STORE);
+    const req = st.put(obj);
+    req.onsuccess = ()=> resolve();
+    req.onerror = ()=> reject(req.error);
+  });
+}
+
+// ===== Utilities =====
+const $ = (sel)=> document.querySelector(sel);
+const editor = $('#editor');
+const preview = $('#preview');
+const saveStatus = $('#saveStatus');
+const statusDot = $('#statusDot');
+const indentWidthSelect = $('#indentWidth');
+const monoToggle = $('#monoToggle');
+
+function countLeadingSpaces(str){
+  // 半角スペース " " と 全角スペース "　" を 1カウントとして扱う
+  let count = 0;
+  for(const ch of str){
+    if(ch === ' ' || ch === '　') count++; else break;
+  }
+  return count;
+}
+
+function repeat(str, n){ return new Array(n+1).join(str); }
+
+/**
+ * 行配列からツリー描画文字列を生成
+ * ルール：
+ *  - 先頭スペース数 = 階層深さ（半角/全角どちらも1としてカウント）
+ *  - ├─ / └─ の判定：同レベル以降の行が存在すれば ├─、無ければ └─
+ *  - 祖先レベルの縦線：その祖先に後続の兄弟がいれば │、無ければ 空白
+ */
+function renderTreeFromLines(lines, indentUnit=2){
+  const depths = lines.map(l => countLeadingSpaces(l));
+  const labels = lines.map(l => l.replace(/^([ \u3000]+)/, '')); // 先頭スペース削除
+
+  // 同レベルの次兄弟が存在するかを調べる関数
+  function hasNextSiblingAt(i, level){
+    for(let k=i+1; k<lines.length; k++){
+      if(depths[k] < level) return false;       // 親より浅くなった→なし
+      if(depths[k] === level) return true;      // 次の兄弟を発見
+    }
+    return false;
+  }
+
+  const out = [];
+  for(let i=0;i<lines.length;i++){
+    const d = depths[i];
+    const label = labels[i] || '';
+
+    if(d === 0){
+      out.push(`<span class="tree-line"><span class="root">${escapeHtml(label)}</span></span>`);
+      continue;
+    }
+
+    // 祖先レベルの縦線を構築
+    let prefixParts = [];
+    for(let lvl=1; lvl<d; lvl++){
+      // 祖先レベル lvl において、この行の属する親に後続兄弟がいるか？
+      const ancestorHasNext = hasNextSiblingAt(i, lvl);
+      if(ancestorHasNext){
+        prefixParts.push(`<span class="guide">│</span>` + repeat(' ', indentUnit-1));
+      }else{
+        prefixParts.push(repeat(' ', indentUnit));
+      }
+    }
+
+    // 現在レベルの枝（├─ または └─）
+    const isLast = !hasNextSiblingAt(i, d);
+    const branch = isLast
+      ? `<span class="last">└</span><span class="guide">─</span>`
+      : `<span class="mid">├</span><span class="guide">─</span>`;
+
+    const spacer = repeat(' ', Math.max(0, indentUnit-1));
+    const prefix = prefixParts.join('') + branch + spacer + ' ';
+    out.push(`<span class="tree-line">${prefix}<span class="text">${escapeHtml(label)}</span></span>`);
+  }
+
+  return out.join("\n");
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>\"']/g, m=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'
+  })[m]);
+}
+
+function updatePreview(){
+  const raw = editor.value.replace(/\r\n?/g, '\n');
+  const lines = raw.split('\n');
+  const indentUnit = parseInt(indentWidthSelect.value, 10) || 2;
+  const rendered = renderTreeFromLines(lines, indentUnit);
+  preview.innerHTML = rendered;
+}
+
+// 入力時：即プレビュー＆保存
+let saveTimer = null;
+function markSaving(){
+  saveStatus.textContent = '保存中…';
+  statusDot.style.background = '#f59e0b';
+}
+function markSaved(){
+  saveStatus.textContent = '保存済み';
+  statusDot.style.background = '#34d399';
+}
+
+async function saveNow(){
+  markSaving();
+  const text = editor.value.replace(/\r\n?/g, '\n');
+  await idbPut({ id:'main', text, updatedAt: Date.now(), indentWidth: parseInt(indentWidthSelect.value,10) });
+  markSaved();
+}
+
+function scheduleSave(){
+  if(saveTimer) cancelAnimationFrame(saveTimer);
+  saveTimer = requestAnimationFrame(saveNow);
+}
+
+// Tab でインデント（等幅想定）
+editor.addEventListener('keydown', (e)=>{
+  if(e.key === 'Tab'){
+    e.preventDefault();
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const val = editor.value;
+    if(e.shiftKey){
+      // アウトデント：先頭の全角/半角スペースを1つ削除
+      const before = val.slice(0, start);
+      const sel = val.slice(start, end);
+      const after = val.slice(end);
+      // 対象行の先頭スペース1つ消す
+      const lineStart = before.lastIndexOf('\n')+1;
+      const leading = val.slice(lineStart, start);
+      let removed = 0;
+      if(leading.startsWith(' ')) { editor.value = val.slice(0, lineStart) + leading.slice(1) + val.slice(start); removed = 1; }
+      else if(leading.startsWith('　')) { editor.value = val.slice(0, lineStart) + leading.slice(1) + val.slice(start); removed = 1; }
+      if(removed){
+        editor.selectionStart = start-1; editor.selectionEnd = end-1;
+      }
+    }else{
+      const insert = ' '.repeat(parseInt(indentWidthSelect.value,10)||2);
+      editor.value = val.slice(0,start) + insert + val.slice(start);
+      editor.selectionStart = editor.selectionEnd = start + insert.length;
+    }
+    updatePreview();
+    scheduleSave();
+  } else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){
+    e.preventDefault(); saveNow();
+  }
+});
+
+editor.addEventListener('input', ()=>{ updatePreview(); scheduleSave(); });
+indentWidthSelect.addEventListener('change', ()=>{ updatePreview(); scheduleSave(); });
+monoToggle.addEventListener('change', ()=>{
+  if(monoToggle.checked){
+    editor.classList.add('mono'); preview.classList.add('mono');
+  }else{
+    editor.classList.remove('mono'); preview.classList.remove('mono');
+  }
+});
+
+// 書き出し/読み込み
+$('#btnExport').addEventListener('click', ()=>{
+  const blob = new Blob([editor.value.replace(/\r\n?/g,'\n')], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'hieronote.txt'; a.click();
+  URL.revokeObjectURL(url);
+});
+$('#fileImport').addEventListener('change', async (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const txt = await f.text();
+  editor.value = txt; updatePreview(); scheduleSave();
+  e.target.value = '';
+});
+
+// 初期化：DBから復元
+(async function init(){
+  try{
+    const rec = await idbGet('main');
+    if(rec && typeof rec.text === 'string'){
+      editor.value = rec.text;
+      if(rec.indentWidth) indentWidthSelect.value = String(rec.indentWidth);
+    }
+  }catch(err){ console.warn('DB load failed', err); }
+  updatePreview(); markSaved();
+})();
+
+</script>
+</body>
+</html>
