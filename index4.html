@@ -326,7 +326,9 @@ monoToggle.addEventListener('change', ()=>{
 // 既存の 「// 書き出し/読み込み」 セクションのエクスポート部分を差し替え
 $('#btnExport').addEventListener('click', () => {
   // previewのHTMLからテキストを抽出（タグ除去して見た目どおりに出力）
-  const previewText = $('#preview').innerText;
+  const previewText = $('#preview').innerText.split('\n')
+  .map(line => line.replace(/^ {1,2}/, '')) // 行頭の半角スペースを最大2個まで除去
+  .join('\n');;
   const blob = new Blob([previewText], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -444,4 +446,3 @@ function parseTreeTextToSpaces(text, indentUnit = 2){
 </script>
 </body>
 </html>
-
