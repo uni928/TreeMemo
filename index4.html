@@ -327,8 +327,16 @@ monoToggle.addEventListener('change', ()=>{
 $('#btnExport').addEventListener('click', () => {
   // previewのHTMLからテキストを抽出（タグ除去して見た目どおりに出力）
   const previewText = $('#preview').innerText.split('\n')
-  .map(line => line.replace(/^ {1,2}/, '')) // 行頭の半角スペースを最大2個まで除去
-  .join('\n');;
+  .map(line => {
+    const m = line.match(/^( +)/);
+    if (m && m[1].length <= 2) {
+      // 深さ1（スペース1個）なら +1 個削除、深さ2以上は対象外
+      if (m[1].length === 1) return line.slice(1);      // 深さ1 → さらに1削除
+      return line.replace(/^ {1,2}/, '');               // 深さ0〜2 → 先頭2個削除
+    }
+    return line; // 深さ3以上 → 変更なし
+  })
+  .join('\n');
   const blob = new Blob([previewText], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -446,4 +454,3 @@ function parseTreeTextToSpaces(text, indentUnit = 2){
 </script>
 </body>
 </html>
-
