@@ -214,7 +214,7 @@ function renderTreeFromLines(lines, indentUnit = 2) {
 
     // --- 各階層ブロックを一定幅に固定（│と├/└を同じ位置に） ---
     let prefixParts = [];
-    const blockWidth = 6; // 各階層の固定幅（│, ├, └の位置を統一）
+    const blockWidth = 4; // 各階層の固定幅（│, ├, └の位置を統一）
     for (let lvl = 1; lvl < d; lvl++) {
       const ancestorHasNext = hasNextSiblingAt(i, lvl);
       if (ancestorHasNext) {
@@ -446,3 +446,4 @@ function parseTreeTextToSpaces(text, indentUnit = 2){
 </script>
 </body>
 </html>
+
