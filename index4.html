@@ -59,6 +59,7 @@
       <div class="flex items-center gap-3 text-sm">
         <span id="saveStatus" class="flex items-center gap-2 text-slate-400"><span class="status-dot bg-slate-500" id="statusDot"></span>保存済み</span>
         <button id="btnExport" class="btn px-3 py-2 rounded-xl border border-white/10 text-slate-200">書き出し</button>
+<button id="pngBtn" class="btn px-3 py-2 rounded-xl border border-white/10 text-slate-200">PNG書き出し</button>
         <label class="btn px-3 py-2 rounded-xl border border-white/10 text-slate-200 cursor-pointer">
           読み込み<input id="fileImport" type="file" accept=".txt" class="hidden" />
         </label>
@@ -115,6 +116,10 @@ root
       © 2025 階層メモ帳 — Auto tree rendering & IndexedDB persistence
     </footer>
   </div>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- html2canvas for PNG export -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
 <script>
 // ===== IndexedDB Minimal Wrapper =====
@@ -450,6 +455,53 @@ function parseTreeTextToSpaces(text, indentUnit = 2){
   }
   return out.join('\n');
 }
+
+// NEW: PREVIEW を PNG として保存
+document.getElementById('pngBtn').addEventListener('click', async () => {
+  const node = preview;
+
+  // 現在のスタイルを保存
+  const originalOverflow = node.style.overflow;
+  const originalWidth = node.style.width;
+  const originalHeight = node.style.height;
+
+  // 内容全体（横も縦も）を描画できるように一時的に拡張
+  node.style.overflow = 'visible';
+  node.style.width = 'max-content';
+  node.style.height = 'max-content';
+
+  // レイアウト反映を待つ
+  await new Promise(r => requestAnimationFrame(r));
+
+  const bg = getComputedStyle(node).backgroundColor
+          || getComputedStyle(document.body).backgroundColor
+          || '#0b1020';
+  const scale = window.devicePixelRatio > 1 ? 2 : 1;
+
+  const canvas = await html2canvas(node, {
+    backgroundColor: bg,
+    scale,
+    useCORS: true,
+    scrollX: 0,
+    scrollY: 0,
+    windowWidth: node.scrollWidth,
+    windowHeight: node.scrollHeight
+  });
+
+  // 元の状態に戻す
+  node.style.overflow = originalOverflow;
+  node.style.width = originalWidth;
+  node.style.height = originalHeight;
+
+  // PNG保存処理
+  const url = canvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '階層メモ.png';
+  a.click();
+});
+
+
 
 </script>
 </body>
